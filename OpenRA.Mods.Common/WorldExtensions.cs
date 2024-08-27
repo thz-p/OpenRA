@@ -200,34 +200,38 @@ namespace OpenRA.Mods.Common
 		}
 
 		/// <summary>
-		/// Finds all the actors of which their health radius is intersected by a line (with a definable width) between two points.
+		/// 找到所有与两点之间的一条线（具有可定义宽度）相交的演员（Actors）。
 		/// </summary>
-		/// <param name="world">The engine world the line intersection is to be done in.</param>
-		/// <param name="lineStart">The position the line should start at.</param>
-		/// <param name="lineEnd">The position the line should end at.</param>
-		/// <param name="lineWidth">How close an actor's health radius needs to be to the line to be considered 'intersected' by the line.</param>
-		/// <param name="onlyBlockers">If set, only considers the size of actors that have an <see cref="IBlocksProjectiles"/>
-		/// trait which may improve search performance. However does NOT filter the returned actors on this trait.</param>
-		/// <returns>A list of all the actors intersected by the line.</returns>
+		/// <param name="world">进行线段相交检查的引擎世界。</param>
+		/// <param name="lineStart">线段的起始位置。</param>
+		/// <param name="lineEnd">线段的结束位置。</param>
+		/// <param name="lineWidth">线段宽度，决定了演员的健康半径（Health Radius）与线段之间的最小距离。</param>
+		/// <param name="onlyBlockers">如果设置为 true，则仅考虑具有 <see cref="IBlocksProjectiles"/> 特性的演员的大小，这可能提高搜索性能。
+		/// 但不会基于此特性过滤返回的演员列表。</param>
+		/// <returns>返回所有与线段相交的演员列表。</returns>
 		public static IEnumerable<Actor> FindActorsOnLine(
 			this World world, WPos lineStart, WPos lineEnd, WDist lineWidth, bool onlyBlockers = false)
 		{
-			// This line intersection check is done by first just finding all actors within a square that starts at the source, and ends at the target.
-			// Then we iterate over this list, and find all actors for which their health radius is at least within lineWidth of the line.
-			// For actors without a health radius, we simply check their center point.
-			// The square in which we select all actors must be large enough to encompass the entire line's width.
-			// xDir and yDir must never be 0, otherwise the overscan will be 0 in the respective direction.
+			// 通过首先在起点和终点之间找到一个矩形内的所有演员来进行线段相交检查。
+			// 然后我们遍历这个列表，找到所有健康半径至少在线段宽度范围内的演员。
+			// 对于没有健康半径的演员，我们只检查它们的中心点。
+			// 选择的矩形必须足够大，以覆盖整个线段的宽度。
+			// xDir 和 yDir 永远不能为 0，否则在相应方向上的 overscan（超选）将为 0。
 			var xDiff = lineEnd.X - lineStart.X;
 			var yDiff = lineEnd.Y - lineStart.Y;
 			var xDir = xDiff < 0 ? -1 : 1;
 			var yDir = yDiff < 0 ? -1 : 1;
 
+			// 根据线段的方向向量 dir，计算超选区域的大小。
 			var dir = new WVec(xDir, yDir, 0);
 			var largestValidActorRadius = onlyBlockers ? world.ActorMap.LargestBlockingActorRadius.Length : world.ActorMap.LargestActorRadius.Length;
 			var overselect = dir * (1024 + lineWidth.Length + largestValidActorRadius);
+
+			// 确定选择区域的起点和终点，该区域必须包括线段的宽度。
 			var finalTarget = lineEnd + overselect;
 			var finalSource = lineStart - overselect;
 
+			// 查找选定矩形内的所有演员。
 			var actorsInSquare = world.ActorMap.ActorsInBox(finalTarget, finalSource);
 			var intersectedActors = new List<Actor>();
 
@@ -235,19 +239,23 @@ namespace OpenRA.Mods.Common
 			{
 				var actorWidth = 0;
 
-				// PERF: Avoid using TraitsImplementing<HitShape> that needs to find the actor in the trait dictionary.
+				// 性能优化：避免使用 TraitsImplementing<HitShape>，因为它需要在特性字典中查找演员。
 				foreach (var targetPos in currActor.EnabledTargetablePositions)
 					if (targetPos is HitShape hitshape)
 						actorWidth = Math.Max(actorWidth, hitshape.Info.Type.OuterRadius.Length);
 
+				// 计算演员的中心点到线段的最小距离。
 				var projection = lineStart.MinimumPointLineProjection(lineEnd, currActor.CenterPosition);
 				var distance = (currActor.CenterPosition - projection).HorizontalLength;
+
+				// 如果演员的中心点到线段的最小距离小于或等于线段宽度和演员宽度之和，则认为该演员与线段相交。
 				var maxReach = actorWidth + lineWidth.Length;
 
 				if (distance <= maxReach)
 					intersectedActors.Add(currActor);
 			}
 
+			// 返回所有与线段相交的演员列表。
 			return intersectedActors;
 		}
 
@@ -265,39 +273,40 @@ namespace OpenRA.Mods.Common
 		}
 
 		/// <summary>
-		/// Find the point (D) on a line (A-B) that is closest to the target point (C).
+		/// 在直线 (A-B) 上找到最接近目标点 (C) 的点 (D)。
 		/// </summary>
-		/// <param name="lineStart">The source point (tail) of the line.</param>
-		/// <param name="lineEnd">The target point (head) of the line.</param>
-		/// <param name="point">The target point that the minimum distance should be found to.</param>
-		/// <returns>The WPos that is the point on the line that is closest to the target point.</returns>
+		/// <param name="lineStart">直线的起点（线段的尾部）。</param>
+		/// <param name="lineEnd">直线的终点（线段的头部）。</param>
+		/// <param name="point">要找到最小距离的目标点 (C)。</param>
+		/// <returns>返回在直线上最接近目标点的点 (D)。</returns>
 		public static WPos MinimumPointLineProjection(this WPos lineStart, WPos lineEnd, WPos point)
 		{
+			// 计算线段的平方长度，避免使用浮点数进行距离计算
 			var squaredLength = (lineEnd - lineStart).HorizontalLengthSquared;
 
-			// Line has zero length, so just use the lineEnd position as the closest position.
+			// 如果线段长度为零（起点和终点重合），则返回终点作为最接近点
 			if (squaredLength == 0)
 				return lineEnd;
 
-			// Consider the line extending the segment, parameterized as target + t (source - target).
-			// We find projection of point onto the line.
-			// It falls where t = [(point - target) . (source - target)] / |source - target|^2
-			// The normal DotProduct math would be (xDiff + yDiff) / dist, where dist = (target - source).LengthSquared;
-			// But in order to avoid floating points, we do not divide here, but rather work with the large numbers as far as possible.
-			// We then later divide by dist, only AFTER we have multiplied by the dot product.
+			// 将线段延长为无限长的直线，并计算点到直线的投影。
+			// 投影点位于参数化方程 target + t * (source - target) 的位置
+			// 其中 t = [(point - target) . (source - target)] / |source - target|^2
+			// 通常的点积计算为 (xDiff + yDiff) / dist，其中 dist = (target - source).LengthSquared
+			// 为了避免使用浮点数，暂时不进行除法运算，而是尽可能处理大数值，
+			// 然后在点积乘法之后再除以 dist。
 			var xDiff = ((long)point.X - lineEnd.X) * (lineStart.X - lineEnd.X);
 			var yDiff = ((long)point.Y - lineEnd.Y) * (lineStart.Y - lineEnd.Y);
 			var t = xDiff + yDiff;
 
-			// Beyond the 'target' end of the segment
+			// 如果投影点在终点 (B) 之外，则返回终点 (B) 作为最接近点
 			if (t < 0)
 				return lineEnd;
 
-			// Beyond the 'source' end of the segment
+			// 如果投影点在起点 (A) 之外，则返回起点 (A) 作为最接近点
 			if (t > squaredLength)
 				return lineStart;
 
-			// Projection falls on the segment
+			// 如果投影点在线段 (A-B) 上，则返回该投影点
 			return WPos.Lerp(lineEnd, lineStart, t, squaredLength);
 		}
 	}
